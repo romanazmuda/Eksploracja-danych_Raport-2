@@ -1,0 +1,880 @@
+\documentclass[12pt, a4paper]{article}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% dodatkowe pakiety LaTeX'a
+\usepackage[OT4]{polski}
+\usepackage[utf8]{inputenc}
+\usepackage[top=2.5cm, bottom=2.5cm, left=2cm, right=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage[colorlinks=true, linkcolor=blue]{hyperref}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ustawienia globalne
+<<ustawienia_globalne, echo=FALSE, warning=FALSE, message=FALSE>>=
+library(knitr)
+library(datasets)
+library(xtable) 
+library(dplyr)
+library(plyr)
+library(moments)
+library(e1071)
+library(MASS)
+library(cluster)
+opts_chunk$set(fig.path='figure/', fig.align='center', fig.pos='H',fig.width=5, fig.height=4)
+
+@
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% strona tytulowa
+
+\title{Raport 2 \\ Dyskretyzacja, Analiza składowych głównych, \\ Skalowanie wielowymiarowe}
+
+\author{Romana Żmuda & 249706 \\ Adrian Kit  & 249746}
+
+\maketitle
+\tableofcontents
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Wst�p- wprowadzenie do podanych zagadnień}
+W tym sprawozdaniu mamy do zbadania 3 zbiory danych. Pierwszy z nich dotyczy kwiatków irysów, drugi 
+różnorakich informacji o stanach w USA. Trzeci zbiór, wybrany przez nas dotyczy .....
+Spróbujemy odpowiedzieć na pytania:
+  -Czy obecność wartości odstających wpływa na efektywność metod dyskretyzacji?
+  -Czy do pełnej analizy zawsze potrzebujemy wszystkich danych?
+
+  W tym celu posłużymy się m.in. dyskretyzacją danych, analizą składowych 
+głównych oraz metodą skalowania wielowymiarowego. 
+
+\subsection{Krótki opis działania podanych metod}
+\begin{itemize}
+\item \textsl{{\large Dyskretyzacja}} \newline
+Dyskretyzacjajest procesem w którym wartości dla atrybutów ciągłych są za-stępowane wartością dyskretną, odpowiadającą pewnemu przedziałowi ciągłychwartości oryginalnego atrybutu. Przedziały te są uporządkowane, co sprawia,że w wyniku dyskretyzacji otrzymujemy zamiast atrybutu ciągłego atrybutporządkowy o skończonej liczbie wartości. 
+\item \textsl{{\large Analiza składowych głównych (PCA)}} \newline
+Analiza składowych głównych (PCA) -  służy m.in. do redukcji liczby zmiennych opisujących zjawiska, czy do odkrycia prawidłowości między zmiennymi. Polega ona na wyznaczeniu składowych będących kombinacją liniową badanych zmiennych. Dokładna analiza składowych głównych umożliwia wskazanie tych zmiennych początkowych, które mają duży wpływ na wygląd poszczególnych składowych głównych czyli tych, które tworzą grupę jednorodną. Składowa główna (u której wariancja jest zmaksymalizowana) jest wówczas reprezentantem tej grupy.
+\item \textsl{{\large Skalowanie wielowymiarowe (MDS)}} \newline
+Skalowanie wielowymiarowe (MDS) może być rozważane jako alternatywa analizy czynnikowej. Ogólnie, celem tej analizy jest wykrycie sensownych ukrytych wymiarów, które pozwalają badaczowi wyjaśnić obserwowane podobieństwa lub odmienności (odległości) między badanymi obiektami. W analizie czynnikowej podobieństwa między obiektami (np. zmiennymi) są wyrażone w postaci macierzy korelacji. Przy pomocy MDS, oprócz macierzy korelacji, można analizować dowolny rodzaj macierzy podobieństwa lub odmienności.
+
+\end{itemize}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Zadanie 1 - Dyskretyzacja (przedziałowanie) cech ciągłych na zbiorze o irysach}
+Podstawowe informacje o podanym pliku danych.
+
+% przygotowanie danych1
+<<przygotowanie danych1, echo=TRUE, warning=FALSE>>=
+library("datasets")
+data("iris")
+attach(iris)
+
+head(iris)
+ncol(iris) # ilośc kolumn
+nrow(iris) #ilość przypadków
+sapply(iris, class) # identyfikacja cech
+ilebrakujacych<-sum(is.na(iris)) 
+ilebrakujacych # liczba brakujących danych
+summary(iris) 
+
+@
+  \newpage
+\subsection{Ocena zdolności dyskryminacyjnej}
+\begin{center}
+Histogramy poszczególnych cech ciągłych
+\end{center}
+% b
+<< b, echo=FALSE, warning=FALSE>>=
+par(mfrow=c(1,4))
+hist(Sepal.Length, main = NULL )
+hist(Sepal.Width, main = NULL)
+hist(Petal.Length, main = NULL)
+hist(Petal.Width, main = NULL, breaks=13)
+
+@
+
+Z histogramów możemy odczytać następujące zależności:
+\begin{itemize}
+\item
+Zmienna Sepal.length ma równomiernie rozmieszczone wartości, przez co ciężko będzie znaleźć jakiekolwiek zróżnicowanie bazując tylko na niej.
+\item
+Zmienna Sepal.Width przypomina rozkład normalny. Przez symetrię, zmienna ta również nie nadaje się do separacji gatunkóW.
+\item
+Zmienne Petal.Length oraz Petal.Width charakteryzują się dużym rozstrzałem wartości, widoczne są także wyraźne wartości odstające. Dzięki temu mogą dobrze różnicować poszczególne gatunki irysów.
+\item
+Warto też zauważyć, że w obu tych zmiennych jest luka w wartościach, co świadczy o zróżnicowaniu wartości.
+\end{itemize}
+
+W następnym kroku naszej analizy sprawdzimy, czy różnice w wartościach są powiązane z gatunkami naszych irysów. Mówiąc wprost, odpowiemy na pytanie: Czy badając poszczególne gatunki irysów możemy otrzymać znacząco zróżnicowane wartości zmiennych? 
+Powtórzymy analizę zmiennych (ograniczając się jednak jedynie do zmiennych Petal.Length oraz Petal.Width) z podziałem na gatunki irysów. 
+\newpage
+\begin{center}
+Zmienna Petal Length
+\end{center}
+% Histogramy Petal.Length
+<< Histogramy Petal.Length, echo=FALSE, warning=FALSE>>=
+
+
+iris.setosa <- subset(iris, Species=="setosa")
+iris.virginica <- subset(iris, Species=="virginica")
+iris.versicolor <- subset(iris, Species=="versicolor")
+
+par(mfrow=c(1,3))
+hist(iris.setosa$Petal.Length, main = NULL, xlab = "Setosa")
+hist(iris.versicolor$Petal.Length, main = NULL, xlab = "Versicolor")
+hist(iris.virginica$Petal.Length, main = NULL, xlab = "Virginica")
+
+@
+Wnioski: 
+\begin{itemize}
+\item Wyraźne zróżnicowanie zakresów zmiennych
+\item Wartości mocno uśrednione, znikoma ilość wartości odstających (sztuczne wydłużenie zakresu).
+\end{itemize}
+
+
+\begin{center}
+
+Zmienna Petal Width
+\end{center}
+% Histogramy Petal.Width
+<< Histogramy Petal.Width, echo=FALSE, warning=FALSE>>=
+
+par(mfrow=c(1,3))
+hist(iris.setosa$Petal.Width, main = NULL, xlab = "Setosa")
+hist(iris.versicolor$Petal.Width, main = NULL, xlab = "Versicolor")
+hist(iris.virginica$Petal.Width, main = NULL, xlab = "Virginica")
+@
+Wnioski:
+\begin{itemize}
+\item Gatunek setosa ma w zdecydowanej większości krótkie płatki długości maksymalnie 0,2. Są zdecydowanie krótsze od płatków innych gatunków (czy wypisujemy dokładnie?)
+\item Skrajne wartości z prawej strony są przyjmowane w bardzo małych ilościach, co sztucznie wydłuża zakres.
+\item Gatunki Versicolor i Virginica mają uśrednione wartości
+\end{itemize}
+
+\textbf{{\large Ogólne podsumowanie: }}
+\begin{itemize}
+\item Poszczególne gatunki irysów mają zdecydowanie zróżnicowane wartości zmiennych.
+\item Irysy gatunku setosa są zdecydowanie mniejsze od pozostałych, po środku uplasował się gatunek Versicolor, największe są irysy gatunku virginica
+\item Różnica między setosą a versicolorem jest zdecydowanie większa niż między versicolorem a virginicą.
+\end{itemize}
+
+
+
+\newpage
+\subsection{Porównanie nienadzorowanych metod dyskretyzacji}
+\subsubsection{Informacje wstępne do dyskretyzacji}
+Po analizie z podsekcji \textsl{Ocena zdolności dyskryminacyjnej} wybraliśmy 2 cechy: Petal.Length, Sepal.Width, które poddamy badaniu dyskretyzacji na najlepszą metodę nienadzorowaną, bedą to:
+\begin{itemize}
+
+\item Dyskretyzacja według równej częstości - taka sama liczba obiektów w przedziale
+\item Dyskretyzacja według równej szerokości - określona liczba  przedziałów
+\item Dyskretyzacja oparta na algorytmie k-średnich -  k różnych możliwie odmiennych skupień, u nas k = 3 odmiany irysów
+\item Metoda oparta na wizualizacji - ręczny podział ze względu na obserwacje
+\end{itemize}
+Krótka obróbka danych:
+% c
+<< c, echo=TRUE, warning=FALSE,message=FALSE >>=
+# Wczytujemy pakiet pozwalający na konwersję zmiennej ciągłej (numeric) 
+# na zmienną jakościową (factor)
+library(arules)
+x_len <- iris[,"Petal.Length"] # lista zmiennych Petal.Lenght
+x_wid <- iris[,"Sepal.Width"] # lista zmienych Sepal.Width
+y_len <- runif(length(x_len))
+# losowo wybierane wartości na osi Y dla zmiennych Petal.Lenght
+y_wid<-runif(length(x_wid))  
+# losowo wybierane wartości na osi Y dla zmiennych Sepal.Width
+
+@
+
+
+Badanie zdolności dyskryminacyjnych : 
+
+% c1
+<< c1, echo=TRUE, warning=FALSE,message=FALSE >>=
+table(Species) 
+#zbadanie ilości klas, czyli u nas ilość gatunków - zmienna jakościowa
+@
+Naszą zmienną separacyjną będzie ilość klas gatunków. Mamy 3 różne gatunki, a ich zmienne noszą nazwy:
+\begin{itemize}
+\item setosa
+\item versicolor
+\item virginica
+\end{itemize}
+\newpage
+Sprawdzamy jej zdolności, czy dobrze separuje klasy za pomocą boxplotów:
+% c2
+<< c2, echo=FALSE, warning=FALSE,message=FALSE >>=
+boxplot(x_len~Species, main = "Separacja danych Petal.Length na klasy gatunków", xlab = "Gatunki", ylab="Petal.Lenght" , col=c('powderblue', 'mistyrose','yellow'))
+boxplot(x_wid~Species,  col=c('powderblue', 'mistyrose','yellow'), main = "Separacja danych Sepal.Width na klasy gatunków", xlab = "Gatunki", ylab="sepal.Width" )
+@
+Zmienna Petal.Lenght, widzimy, iż taki separator doskonale ukazuje róznice dla obydwóch zmiennych.Zmienne w klasach Versicolor i Virginica są znacznie bliżej siebie, niż wartości Setosy i Versicolor, jak róWnież wartości z Ver i Virg skrajne mogą na wykresie zostać sklasyfikowane do nie swojego gatunku.
+Zmienna Sepal.Width ma zbiory, których wartości z odpowiednich klas nakładają się na siebie, możliwe że poszczególne elementy nie będą należeć do właściwych gatunków. 
+\newline
+Teraz przyjrzymy się badanym zmiennym (bez podziału na klasy) w celu szybkiego zrozumienia i dokonaniu pierwszych spotrzeżeń w ich położeniach.
+% c3
+<< c3, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len,y_len, main = "Wyjściowe dane dla Petal.Length", xlab = "Petal.Length")
+plot(x_wid,y_wid, main = "Wyjściowe dane dla Sepal.Width", xlab = "Petal.Width")
+@
+Krótka obserwacja dla Petal.Length: znaczący podział na dwie grupy, co może potwierdzać wcześniejsze wnioski, iż setosa odstaje od pozostałych dwóch grup.
+Krótka obserwacja dla Sepal.Width: zbiór skoncentrowany w punkcie 3.
+
+
+
+\subsubsection{Dyskretyzacja według równej częstości}
+\begin{itemize}
+\item {\large Zmienna Petal.Length}
+% c4
+<< c4, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len_cz<- discretize(x_len, breaks = 3) 
+x_len_cz_table<-table(x_len_cz)
+print("Podziały metodą równych części: " )
+x_len_cz_table
+hist(x_len, breaks = 10, main = "Podziały według równej częstości", xlab = "Petal.Length")
+x_len_cz_breaks <- attributes(x_len_cz)$"discretized:breaks"
+abline(v = x_len_cz_breaks, col = "pink", lwd=3)
+@
+
+
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c5
+<< c5, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja według równej częstości",xlab="Petal.Length")
+abline(v = x_len_cz_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3,
+       pch=21, bg = "azure")
+@
+Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c6
+<< c6, echo=FALSE, warning=FALSE,message=FALSE >>=
+
+cz_table <- table(x_len_cz, Species)
+print("Podziały metodą równych części z uwzgędnieniem klas : " )
+cz_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_cz, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+Oraz wyznaczony współczynnik zgodności:
+% c7
+<< c7, echo=FALSE, warning=FALSE,message=FALSE >>=
+matchClasses(cz_table)
+@
+
+
+
+\item {\large Zmienna Sepal.Width}
+% c10
+<< c10, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_wid_cz<- discretize(x_wid, breaks = 3) 
+x_wid_cz_table<-table(x_wid_cz)
+print("Podziały metodą równych części: " )
+x_wid_cz_table
+hist(x_wid, breaks = 10, main = "Podziały według równej częstości", xlab = "Sepal.Width")
+x_wid_cz_breaks <- attributes(x_wid_cz)$"discretized:breaks"
+abline(v = x_wid_cz_breaks, col = "pink", lwd=3)
+@
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c11
+<< c11, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_wid, y_wid, col=Species, main = "Dyskretyzacja według równej częstości",xlab="Sepal.Width")
+abline(v = x_wid_cz_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3,
+       pch=21, bg = "azure")
+@
+Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c12
+<< c12, echo=FALSE, warning=FALSE,message=FALSE >>=
+
+cz_table <- table(x_wid_cz, Species)
+print("Podziały metodą równych części z uwzgędnieniem klas : " )
+cz_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_wid_cz, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+Oraz wyznaczony współczynnik zgodności:
+% c13
+<< c13, echo=FALSE, warning=FALSE,message=FALSE >>=
+matchClasses(cz_table)
+@
+
+\end{itemize}
+\subsubsection{Dyskretyzacja według równej szerokości}
+\begin{itemize}
+\item {\large Zmienna Petal.Length}
+% c14
+<< c14, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len_sz <- discretize(x_len, method = "interval", breaks = 3)
+x_len_sz_table<-table(x_len_sz)
+print("Podziały metodą równej szerokości: " )
+x_len_sz_table
+hist(x_len, breaks = 10, main = "Podziały według równej szerokości", xlab = "Petal.Length")
+x_len_sz_breaks <- attributes(x_len_sz)$"discretized:breaks"
+abline(v = x_len_sz_breaks, col = "pink", lwd=3)
+@
+
+
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c15
+<< c15, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja według równej szerokości",xlab="Petal.Length")
+abline(v = x_len_sz_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3,
+       pch=21, bg = "azure")
+@
+Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c16
+<< c16, echo=FALSE, warning=FALSE,message=FALSE >>=
+
+sz_table <- table(x_len_sz, Species)
+print("Podziały metodą równej szerokośći z uwzgędnieniem klas : " )
+sz_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_sz, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+Oraz wyznaczony współczynnik zgodności:
+% c17
+<< c17, echo=FALSE, warning=FALSE,message=FALSE >>=
+matchClasses(sz_table)
+@
+
+
+\item {\large Zmienna Sepal.Width}
+% c22
+<< c22, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_wid_sz<- discretize(x_wid,method = "interval", breaks = 3) 
+x_wid_sz_table<-table(x_wid_sz)
+print("Podziały metodą równej szerokości: " )
+x_wid_sz_table
+@
+
+% c21
+<< c21, echo=FALSE, warning=FALSE,message=FALSE >>=
+hist(x_wid, breaks = 10, main = "Podziały według równej szerokości", xlab = "Sepal.Width")
+x_wid_sz_breaks <- attributes(x_wid_sz)$"discretized:breaks"
+abline(v = x_wid_sz_breaks, col = "pink", lwd=3)
+@
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c18
+<< c18, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_wid, y_wid, col=Species, main = "Dyskretyzacja według równej szerokości",xlab="Sepal.Width")
+abline(v = x_wid_sz_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3,
+       pch=21, bg = "azure")
+@
+Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c19
+<< c19, echo=FALSE, warning=FALSE,message=FALSE >>=
+
+sz_table <- table(x_wid_sz, Species)
+print("Podziały metodą równej szerokości z uwzgędnieniem klas : " )
+sz_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_wid_sz, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+Oraz wyznaczony współczynnik zgodności:
+% c20
+<< c20, echo=FALSE, warning=FALSE,message=FALSE >>=
+matchClasses(sz_table)
+@
+
+\end{itemize}
+
+
+
+
+
+
+\subsubsection{Dyskretyzacja oparta na algorytmie k-średnich}
+\begin{itemize}
+\item {\large Zmienna Petal.Length}
+% c33
+<< c33, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len_k <- discretize(x_len, method = "cluster", breaks = 3)
+x_len_k_table<-table(x_len_k)
+print("Podziały metodą opartą na algorytmie grupowania: " )
+x_len_k_table
+hist(x_len, breaks = 10, main = "Podziały według algorytmu grupowania", xlab = "Petal.Length")
+x_len_k_breaks <- attributes(x_len_k)$"discretized:breaks"
+abline(v = x_len_k_breaks, col = "pink", lwd=3)
+@
+
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c32
+<< c32, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja oparta na algorytmie grupowania",xlab="Petal.Length")
+abline(v = x_len_k_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3, pch=21, bg = "azure")
+@
+  Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c31
+<< c31, echo=FALSE, warning=FALSE,message=FALSE >>=
+  
+k_table <- table(x_len_k, Species)
+print("Podziały metodą opartą na algorytmie grupowania z uwzgędnieniem klas : " )
+k_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_k, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+  Oraz wyznaczony współczynnik zgodności:
+% c30
+<< c30, echo=FALSE, warning=FALSE,message=FALSE >>=
+  matchClasses(k_table)
+@
+  
+
+\item {\large Zmienna Sepal.Width}
+% c34
+<< c34, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_wid_k <- discretize(x_wid, method = "cluster", breaks = 3)
+x_wid_k_table<-table(x_wid_k)
+print("Podziały metodą opartą na algorytmie grupowania: " )
+x_wid_k_table
+hist(x_wid, breaks = 10, main = "Podziały według algorytmu grupowania", xlab = "Sepal.Width")
+x_wid_k_breaks <- attributes(x_wid_k)$"discretized:breaks"
+abline(v = x_wid_k_breaks, col = "pink", lwd=3)
+@
+
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c35
+<< c35, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_wid, y_wid, col=Species, main = "Dyskretyzacja oparta na algorytmie grupowania",xlab="Sepal.Width")
+abline(v = x_len_k_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3, pch=21, bg = "azure")
+@
+  Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c36
+<< c36, echo=FALSE, warning=FALSE,message=FALSE >>=
+  
+k_table <- table(x_wid_k, Species)
+print("Podziały metodą opartą na algorytmie grupowania z uwzgędnieniem klas : " )
+k_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_wid_k, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+  Oraz wyznaczony współczynnik zgodności:
+% c37
+<< c37, echo=FALSE, warning=FALSE,message=FALSE >>=
+  matchClasses(k_table)
+@
+\end{itemize}
+
+
+
+\subsubsection{Dyskretyzacja oparta na przedziałach zadanych przez użytkownika}
+\begin{itemize}
+\item {\large Zmienna Petal.Length}
+% c38
+<< c38, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len_u <- discretize(x_len, method = "fixed", 
+      breaks = c(-Inf, 2, 5, Inf), labels = c("small","medium", "large"))
+x_len_u_table<-table(x_len_u)
+print("Podziały metodą opartą na podziłach podanych przez użytkownika: " )
+x_len_u_table
+hist(x_len, breaks = 10, main = "Fixed")
+x_len_u_breaks <- c(-Inf, 2, 5, Inf)
+abline(v = x_len_u_breaks, col = "pink", lwd=2)
+@
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c39
+<< c39, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja oparta przedziłach użytkownika",xlab="Petal.Length")
+abline(v = x_len_u_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3, pch=21, bg = "azure")
+@
+  Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c40
+<< c40, echo=FALSE, warning=FALSE,message=FALSE >>=
+  
+u_table <- table(x_len_u, Species)
+print("Podziały podane przez użytkownika z uwzgędnieniem klas : " )
+u_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_u, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+  Oraz wyznaczony współczynnik zgodności:
+% c41
+<< c41, echo=FALSE, warning=FALSE,message=FALSE >>=
+  matchClasses(u_table)
+@
+  
+  
+\item {\large Zmienna Sepal.Width}
+% c42
+<< c42, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_wid_u <- discretize(x_wid, method = "fixed", 
+      breaks = c(-Inf, 2.7, 3.4, Inf), labels = c("small","medium", "large"))
+x_wid_u_table<-table(x_wid_u)
+print("Podziały metodą opartą na podziłach podanych przez użytkownika: " )
+x_wid_u_table
+hist(x_wid, breaks = 10, main = "Fixed")
+x_wid_u_breaks <- c(-Inf, 2.7, 3.4, Inf)
+abline(v = x_wid_u_breaks, col = "pink", lwd=2)
+@
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c43
+<< c43, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_wid, y_wid, col=Species, main = "Dyskretyzacja oparta przedziłach użytkownika",xlab="Sepal.Width")
+abline(v = x_wid_u_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3, pch=21, bg = "azure")
+@
+  Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c44
+<< c44, echo=FALSE, warning=FALSE,message=FALSE >>=
+  
+u_table <- table(x_wid_u, Species)
+print("Podziały podane przez użytkownika z uwzgędnieniem klas : " )
+u_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_wid_u, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+  Oraz wyznaczony współczynnik zgodności:
+% c45
+<< c45, echo=FALSE, warning=FALSE,message=FALSE >>=
+  matchClasses(u_table)
+@
+  
+\end{itemize}
+
+
+\subsection{Wpływ obserwacji odstających przy badaniu metod dyskretyzacji}
+
+% c47
+<< c47, echo=FALSE, warning=FALSE,message=FALSE >>=
+iris1<-data.frame(iris)
+
+
+iris1$Petal.Length[which.min(iris1$Petal.Length)] <- (min(iris1$Petal.Length)-2*IQR(iris1$Petal.Length))
+iris1$Petal.Length[which.max(iris1$Petal.Length)] <- (max(iris1$Petal.Length)+2*IQR(iris1$Petal.Length))
+
+@
+
+
+
+
+\subsubsection{Dyskretyzacja według równej częstości}
+{\large Nowa zmienna Petal.Length }
+
+% c48
+<< c48, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len <- iris1[,"Petal.Length"] # lista nowych zmiennych Petal.Lenght 
+y_len <- runif(length(x_len))
+# losowo wybierane wartości na osi Y dla nowych zmiennych Petal.Lenght
+x_len_cz<- discretize(x_len, breaks = 3) 
+x_len_cz_table<-table(x_len_cz)
+print("Podziały metodą równych części: " )
+x_len_cz_table
+hist(x_len, breaks = 10, main = "Podziały według równej częstości", xlab = "Petal.Length")
+x_len_cz_breaks <- attributes(x_len_cz)$"discretized:breaks"
+abline(v = x_len_cz_breaks, col = "pink", lwd=3)
+@
+
+
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c49
+<< c49, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja według równej częstości",xlab="Petal.Length")
+abline(v = x_len_cz_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3,
+       pch=21, bg = "azure")
+@
+Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c50
+<< c50, echo=FALSE, warning=FALSE,message=FALSE >>=
+
+cz_table <- table(x_len_cz, Species)
+print("Podziały metodą równych części z uwzgędnieniem klas : " )
+cz_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_cz, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+Oraz wyznaczony współczynnik zgodności:
+% c51
+<< c51, echo=FALSE, warning=FALSE,message=FALSE >>=
+matchClasses(cz_table)
+@
+
+
+
+
+\subsubsection{Dyskretyzacja według równej szerokości}
+{\large Nowa zmienna Petal.Length }
+% c52
+<< c52, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len_sz <- discretize(x_len, method = "interval", breaks = 3)
+x_len_sz_table<-table(x_len_sz)
+print("Podziały metodą równej szerokości: " )
+x_len_sz_table
+hist(x_len, breaks = 10, main = "Podziały według równej szerokości", xlab = "Petal.Length")
+x_len_sz_breaks <- attributes(x_len_sz)$"discretized:breaks"
+abline(v = x_len_sz_breaks, col = "pink", lwd=3)
+@
+
+
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c53
+<< c53, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja według równej szerokości",xlab="Petal.Length")
+abline(v = x_len_sz_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3,
+       pch=21, bg = "azure")
+@
+Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c54
+<< c54, echo=FALSE, warning=FALSE,message=FALSE >>=
+
+sz_table <- table(x_len_sz, Species)
+print("Podziały metodą równej szerokośći z uwzgędnieniem klas : " )
+sz_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_sz, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+Oraz wyznaczony współczynnik zgodności:
+% c55
+<< c55, echo=FALSE, warning=FALSE,message=FALSE >>=
+matchClasses(sz_table)
+@
+
+
+
+
+\subsubsection{Dyskretyzacja oparta na algorytmie k-średnich}
+{\large Nowa zmienna Petal.Length }
+
+% c56
+<< c56, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len_k <- discretize(x_len, method = "cluster", breaks = 3)
+x_len_k_table<-table(x_len_k)
+print("Podziały metodą opartą na algorytmie grupowania: " )
+x_len_k_table
+hist(x_len, breaks = 10, main = "Podziały według algorytmu grupowania", xlab = "Petal.Length")
+x_len_k_breaks <- attributes(x_len_k)$"discretized:breaks"
+abline(v = x_len_k_breaks, col = "pink", lwd=3)
+@
+
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c57
+<< c57, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja oparta na algorytmie grupowania",xlab="Petal.Length")
+abline(v = x_len_k_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3, pch=21, bg = "azure")
+@
+  Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c58
+<< c58, echo=FALSE, warning=FALSE,message=FALSE >>=
+  
+k_table <- table(x_len_k, Species)
+print("Podziały metodą opartą na algorytmie grupowania z uwzgędnieniem klas : " )
+k_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_k, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+  Oraz wyznaczony współczynnik zgodności:
+% c59
+<< c59, echo=FALSE, warning=FALSE,message=FALSE >>=
+  matchClasses(k_table)
+@
+  
+
+\subsubsection{Dyskretyzacja oparta na przedziałach zadanych przez użytkownika}
+{\large Nowa zmienna Petal.Length }
+
+% c60
+<< c60, echo=FALSE, warning=FALSE,message=FALSE >>=
+x_len_u <- discretize(x_len, method = "fixed", 
+      breaks = c(-Inf, 2, 5, Inf), labels = c("small","medium", "large"))
+x_len_u_table<-table(x_len_u)
+print("Podziały metodą opartą na podziłach podanych przez użytkownika: " )
+x_len_u_table
+hist(x_len, breaks = 10, main = "Fixed")
+x_len_u_breaks <- c(-Inf, 2, 5, Inf)
+abline(v = x_len_u_breaks, col = "pink", lwd=2)
+@
+Porównanie z podziałem na rzeczywiste klasy gatunków:
+% c61
+<< c61, echo=FALSE, warning=FALSE,message=FALSE >>=
+plot(x_len, y_len, col=Species, main = "Dyskretyzacja oparta przedziłach użytkownika",xlab="Petal.Length")
+abline(v = x_len_u_breaks, col = "pink", lwd=3)
+legend(x = "topright", legend=levels(Species), col=1:3, pch=21, bg = "azure")
+@
+  Ostatni etap to wyznaczenie macierzy kontyngencji i sprawdzenie, w jakim stopniu obiekty należące do poszczególnych klas są przypisane do tej samej kategorii. Najpierw zobaczmy czy odpowiednie gatunki znalazły się w swoich podziałach:
+% c62
+<< c62, echo=FALSE, warning=FALSE,message=FALSE >>=
+  
+u_table <- table(x_len_u, Species)
+print("Podziały podane przez użytkownika z uwzgędnieniem klas : " )
+u_table
+par(mar = c(4, 2, 4, 2))
+plot(Species~x_len_u, col=1:3, main= "Macierz kontyngencji przedziału do gatunku", xlab="Przedział")
+@
+  Oraz wyznaczony współczynnik zgodności:
+% c63
+<< c63, echo=FALSE, warning=FALSE,message=FALSE >>=
+  matchClasses(u_table)
+@
+Wnioski: .....
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Zadanie 2. Analiza składowych głównych PCA}
+\subsection{Wczytanie danych}
+Poprawne wczytanie danych
+%d1
+<< d1, echo=TRUE, warning=FALSE,message=FALSE >>=
+
+data(state); dane <- as.data.frame(state.x77)
+@
+Podstawowe informacje o danych
+%kk22
+<< kk22, echo=TRUE, warning=FALSE,message=FALSE >>=
+head(dane) 
+ncol(dane) # ilośc kolumn
+nrow(dane) #ilość przypadków
+sapply(dane, class) # identyfikacja cech
+ilebrakujacych<-sum(is.na(dane)) 
+ilebrakujacych # liczba brakujących danych
+@
+W tym zadaniu przeprowadzimy analizę danych składowych PCA na zbiorze danych state.x77. Zaczniemy od sprawdzenia zmienności cech. Jeśli wariancje poszczególnych zmiennych będą zbyt zróżnicowane, wtedy konieczna będzie standaryzacja.
+
+\subsection{Przygotowanie danych}
+Badanie zmienności cech (wariancja):
+
+%d2
+<< d2, echo=FALSE, warning=FALSE,message=FALSE >>=
+colwise(var)(dane)
+@
+Obserwacje: Wariancje wyjściowych zmiennych są bardzo zróżnicowane. Celem uniknięcia dominacji zmiennej o bardzo dużej
+wariancji (zmienna Area) przeprowadzimy standaryzację danych przed zastosowaniem metody PCA.
+%d3
+<< d3, echo=FALSE, warning=FALSE,message=FALSE >>=
+dane1<-scale(dane)
+dane2<-data.frame(dane1)
+
+boxplot(dane$Population, dane$Area, dane$Illiteracy, dane$Income, names = c("Population", "Area", "Illiteracy", "Income"),
+col = c("orange","red","yellow","pink"),main="Boxplot dla 4 zmiennych przed standaryzacją")
+
+boxplot(dane2$Population, dane2$Area,dane2$Illiteracy,dane2$Income, names = c("Population", "Area", "Illiteracy", "Income"),
+col = c("orange","red","yellow","pink"), main="Boxplot dla 4 zmiennych po standaryzacji")
+
+@
+Wnioski: Przed standaryzacją danych największą wariancję miała zmienna Area, co mogło sugerować, że to ona będzie miała największy wpływ  na nasze zmienne. Jednak po normalizacji zmienna ta okazuje się być jedną z najmniej istotnych, co potwierdza, że standaryzacja była absolutnie konieczna
+
+\subsection{Wyznaczenie składowych głównych oraz zbadanie zmienności}
+Wyznaczenie składowych głównych oraz wyświetlenie macierzy która wskazuje, jak każda ze zmiennych w wyściowym zbiorze wpływa na poszczególne główne składowe:
+%d4
+<< d4, echo=FALSE, warning=FALSE,message=FALSE >>=
+
+dane_pca<-prcomp(dane2, retx=T, center=T, scale.=T) 
+
+print("Nowe cechy:")
+print(dane_pca$rotation)
+@
+Zbadamy wektory ładunków, w celu odkycia, które z PC1,PC2,PC3, ... mają największy wkład redukcji danych i przenoszonej informacji o cechach:
+Wartości dla poszczególnych PCA:
+%d6
+<< d6, echo=TRUE, warning=FALSE,message=FALSE >>=
+
+summary(dane_pca) 
+
+@
+W interpretacji wyników najbardziej istotna jest część objaśnianej zmienności (Proportion of Variance) widoczna po zastosowaniu funkcji summary. Na jej podstawie możemy stwierdzić, że pierwsza składowa główna wyjaśnia 44,99\% zmienności, a druga - 20,40\%.
+\newline
+W celu lepszej analizy zastosujemy boxplot rozkładu wariancji oraz barplot procentowego udziału odpowiednich wartości PCA:
+
+% d5
+<< d5, echo=FALSE, warning=FALSE,message=FALSE >>=
+par(mar = c(4, 2, 4, 2))
+boxplot(dane_pca$x, main="Boxplot wariancji")
+par(mar = c(2, 2, 2, 2))
+x<-barplot(dane_pca$sdev^2/sum(dane_pca$sdev^2)*100, main = "Wyjaśniona wariancja [%]",names.arg = c("PC1", "PC2", "PC3", "PC4", "PC5", "PC6", "PC7","PC8"))
+text(x, (dane_pca$sdev^2/sum(dane_pca$sdev^2)*100)/2, labels = round(dane_pca$sdev^2/sum(dane_pca$sdev^2)*100), digits = 2)
+@
+Kolejne słupki oznaczają zsumowane wartości PCA, zaczynając od PC1 kończąc na ich sumie:
+% d565
+<< d565, echo=FALSE, warning=FALSE,message=FALSE >>=
+par(mar = c(2, 1.8, 2, 0))
+barplot(cumsum(dane_pca$sdev^2/sum(dane_pca$sdev^2))*100,main = "Skulumowana wyjaśniona wariancja [%]",
+           col=c("pink","red","blue","grey","green","yellow","orange","purple"), angle = 1, ylim=c(0,130))
+abline(h=80,col="red",lty=2)
+abline(h=90,col="pink", lty=2)
+legend("top", legend = c("45%","65%","79%","88%","93%","97","99","100%" ) , 
+     col=c("pink","red","blue","grey","green","yellow","orange","purple"), pch=20 , pt.cex = 2, cex = 0.8, horiz = TRUE
+     ,box.col = "white")
+@
+Widzimy, że zmienna PC1+PC2+PC3 stanowi  około 80\% informacji o danych, \newline
+natomiast PC1+PC2+PC3+PC4+PC5 stanowi 90 \%. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Zadanie 3 - Skalowanie wielowymiarowe (MDS)}
+Celem tej metody jest wyznaczenie współrzędnych w nowym układzie współrzędnych, w taki sposób by odległości pomiędzy obiektami w nowym układzie współrzędnych były podobne do oryginalnych odległości pomiędzy obiektami, w tej metodzie szczególną uwagę przykładamy do zmiennych jakościowych. W naszym raporcie użyjemy metody skalowania metrycznego przy pomocy funkcji \textsl{cmdscale} . Jest to metoda ekstrakcji cech, na podstawie macierzy odległości lub macierzy niepodobieństwa pomiędzy obiektami.
+\subsection{Wprowadzenie danych}
+Wybraliśmy dane z pakietu \textsl{lattice} o nazwie "US Regional Mortality", poniżej krótka charakteryzacja pliku:
+% e1
+<< e1, echo=TRUE, warning=FALSE,message=FALSE >>=
+library(lattice)
+mortal<-as.data.frame(USRegionalMortality)
+attach(mortal)
+
+head(mortal)
+ncol(mortal) # ilośc kolumn
+nrow(mortal) #ilość przypadków
+sapply(mortal, class) # identyfikacja cech
+ilebrakujacych<-sum(is.na(mortal)) 
+ilebrakujacych # liczba brakujących danych
+
+@
+Plik zawiera 6 cech i 400 przypadków, w których kolumny odpowiednio nazywają się: 
+\begin{itemize}
+\item Region - podzielony na 10 różnych klas odpowiadającym odpowiednim organą w Stanach Zjednoczonych
+\item Status - miejsce zamieszkania (wiejski lub miejski)
+\item Sex - płeć
+\item Cause - przyczyna śmierci
+\item Rate - wskaźnik sposobu śmierci na 100 000 osób w danym regionie
+\item SE - standardowy błąd dla wskażnika
+\end{itemize}
+\subsection{Redukcja wymiaru na bazie MDS - skalowanie Kruskala}
+W każdej metodzie skalowania musimy zacząć od tworzenia macierzy odmienności:
+% e2
+<< e2, echo=TRUE, warning=FALSE,message=FALSE >>=
+n <- dim(mortal)[1]
+n.subset <- 30
+subset.index <- sample(1:n, n.subset) # losujemy 30 samochodów
+
+mortal_subset <- mortal[subset.index,]
+# Przypisujemy nazwy regionów (pomoże nam to zidentyfikować odpowiednie regiony)
+regiony <- paste(mortal_subset$Region, sep=" ")
+# Usuwamy niepotrzebne zmienne
+mortal_mds <- subset(mortal_subset, col=-c("Region"))
+
+
+
+niepodobienstwa = daisy(mortal_mds,stand=T)
+niepodobienstwa <- as.matrix(niepodobienstwa) #macierz odmienności
+@
+
+Przeprowadzamy skalowanie metryczne do przestrzeni o dwóch wymiarach: 
+% e3
+<< e3, echo=TRUE, warning=FALSE,message=FALSE >>=
+mds_k2<-cmdscale(niepodobienstwa, k=2)
+#skalowanie wielowymiarowe
+#nasze wyniki zawierą współrzędne obserwacji w nowym układzie współrzędnych
+str(mds_k2)
+@
+\subsubsection{Jakość odwzorowania MDS dla różnych wymiarów przestrzeni}
+
+W sekcji powyżej obliczyliśmy naturalne odległości występujące w zmiennych i przedstawiliśmy w postaci macierzowej, naszym zadaniem będzie zbadanie różnicy w podobieństwach po zastosowaniu skalowania MDS i porównanie o ile zmieniły się dane w stosunku do stanu przed zastosowaniem skalowania. Najpowszechniejszą miarą stosowaną do szacowania, na ile dobrze (lub źle) dana konfiguracja odtwarza obserwowaną macierz odległości jest  kryterium Stress. 
+\newline Kryterium Stress:
+% e4
+<< e4, echo=TRUE, warning=FALSE,message=FALSE >>=
+# obliczamy odległość w nowej przestrzeni metodą euklidesową
+dist_mds_k2 <- dist(mds_k2, method="euclidean")
+dist_mds_k2 <- as.matrix(dist_mds_k2) #nowa odległość dla przestrzeni d =2
+dis_original <- niepodobienstwa #odległość oryginalna
+STRESS <- sum((dis_original-dist_mds_k2)^2) #kryterium stress
+print("Wartość odmienności :")
+STRESS  
+@
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\end{document}
